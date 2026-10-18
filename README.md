@@ -1,70 +1,63 @@
-# SIS Checkpoint 1 — Text Analyzer
+# Text Analyzer
 
-Author: Tursynmamet Ayan. Individual project for Golang Application Development.
+SIS Checkpoint 1 — Golang Application Development.
 
-## What it does
+## Overview
 
-A task represents analysis of one text. The service validates input, assigns an integer ID, stores the task in a map, calculates text statistics, and stores the result. No external dependencies, database, HTTP, goroutines, or persistence.
+A synchronous Go application that creates and processes text-analysis tasks. Each task has an ID, input text, status, and result. Tasks and results are stored in memory.
 
-Requires **Go 1.27.0 or later in the Go 1.27 series**, as specified by the assignment.
+## Requirements
+
+Go 1.27.
 
 ## Run
 
-From the folder containing go.mod:
+From the project root:
 
 ```sh
-go version
 go run ./cmd/demo
-go test -v ./...
+```
+
+The demo processes two texts and shows error handling for invalid input, a missing task, and repeated processing.
+
+## Checks
+
+```sh
+go test ./...
 go vet ./...
 gofmt -l .
 go build ./...
 ```
 
-`gofmt -l .` and `go vet ./...` should print nothing. Tests should pass.
-
 ## Structure
 
-- `task/task.go`: domain types, errors, Analyzer interface, text analysis, in-memory Service.
-- `task/task_test.go`: creation, validation, lookup, results, states, invalid operations, independence, snapshot isolation.
-- `cmd/demo/main.go`: runnable demonstration including expected error cases.
-- `docs/DEFENSE_RU_EN.md`: explanation, defense questions and submission steps.
-- `docs/REQUIREMENTS.md`: specification-to-code mapping and sources.
-- `docs/VALIDATION.txt`: actual environment verification results.
+- `cmd/demo/main.go` — demonstration.
+- `task/task.go` — task model, text analyzer, and in-memory service.
+- `task/task_test.go` — unit tests.
 
-## Rules and lifecycle
+## Input and results
 
-Input must be valid UTF-8 and contain a non-whitespace character. Original input is preserved.
+Input must be valid UTF-8 and contain at least one non-whitespace character. The original text is preserved.
+
+Results contain:
+
+- Words: whitespace-separated fields.
+- Characters: Unicode code points, including spaces and punctuation.
+- Letters: Unicode letters.
+- Digits: Unicode digits.
+
+For `Hello Go world`, the result is 3 words, 14 characters, 12 letters, and 0 digits.
+
+## Lifecycle
 
 `pending -> processing -> completed`
 
-Create stores pending. Process accepts only pending, stores processing before analysis, then stores result and completed. Processing a completed or processing task returns ErrInvalidState. There is no public state setter. Unknown IDs return ErrNotFound; invalid text returns ErrInvalidInput. errors.Is supports checking wrapped errors.
+Create validates input and stores a pending task. Process accepts only pending tasks, changes the status to processing, calculates the result, and saves the completed task. Processing an existing processing or completed task returns an error.
 
-Processing is synchronous; after Process returns, the task is completed. The intermediate processing state is verified with an observing analyzer in a unit test. The built-in analyzer is deterministic and has no expected processing failure for validated input, so a failed state is not needed.
+Invalid input returns ErrInvalidInput. Unknown IDs return ErrNotFound. Invalid processing operations return ErrInvalidState.
 
-## Result definitions
+## Storage
 
-- Words: `len(strings.Fields(text))`; whitespace separates words, punctuation does not.
-- Characters: Unicode code points (runes), including spaces and punctuation, not UTF-8 bytes or grapheme clusters.
-- Letters: runes for which unicode.IsLetter is true.
-- Digits: runes for which unicode.IsDigit is true.
+Service uses a map keyed by integer IDs. IDs are unique within a service instance. Get returns a task copy. Initialize the service with NewService.
 
-Example: `Hello Go world` gives words=3, characters=14 (5+1+2+1+5), letters=12 (5+2+5), digits=0.
-
-## Design
-
-Service owns a map[int]Task and a monotonically increasing ID counter scoped to one service instance. IDs restart at 1 on restart. NewService allocates the map and supplies TextAnalyzer. Use the constructor; zero-value Service is not supported.
-
-Methods modifying service state use pointer receivers. TextAnalyzer uses a value receiver because it has no mutable state. Analyzer is a meaningful processing abstraction: production uses TextAnalyzer, while tests substitute an observer to check the actual processing state.
-
-Get returns a Task value snapshot. All Task fields are values (including immutable strings and a value Result), so callers cannot mutate stored tasks. Changing a retrieved Task does not change the map.
-
-This implementation is deliberately single-threaded and not concurrency-safe. All data is lost on program exit. Concurrency and HTTP belong to later checkpoints.
-
-## Sources
-
-Specification: https://github.com/salikhP/GOLANG-FALL-2026-KBTU/blob/0d60b05cf2e270f93203fa2b362dd5b0c0305e8f/sis/SIS_CP1_SPECIFICATION.md
-
-Student guidelines: https://github.com/salikhP/GOLANG-FALL-2026-KBTU/blob/0d60b05cf2e270f93203fa2b362dd5b0c0305e8f/sis/SIS%20Student%20Guidelines.pdf
-
-See docs/REQUIREMENTS.md for the full mapping. No score is guaranteed; defense is required.
+Processing is synchronous. The service is not concurrency-safe. Data is lost when the application exits.
