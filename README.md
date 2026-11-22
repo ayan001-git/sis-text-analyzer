@@ -1,63 +1,49 @@
 # Text Analyzer
 
-SIS Checkpoint 1 — Golang Application Development.
+SIS Checkpoint 2 · Golang Application Development
 
-## Overview
+Text Analyzer processes UTF-8 text and counts whitespace-separated words, Unicode code points (including spaces and punctuation), Unicode letters, and Unicode digits. For example, `Сәлем Go 2026` yields 3 words, 13 characters, 7 letters, and 4 digits. The original text, task status, and result are stored in memory under a unique ID.
 
-A synchronous Go application that creates and processes text-analysis tasks. Each task has an ID, input text, status, and result. Tasks and results are stored in memory.
+## Run and verify
 
-## Requirements
-
-Go 1.27.
-
-## Run
-
-From the project root:
+Use Go 1.27. From the project root, run:
 
 ```sh
 go run ./cmd/demo
-```
-
-The demo processes two texts and shows error handling for invalid input, a missing task, and repeated processing.
-
-## Checks
-
-```sh
-go test ./...
-go vet ./...
 gofmt -l .
+go vet ./...
+go test ./...
+go test -race ./...
 go build ./...
 ```
 
-## Structure
+The demo creates and submits three texts, waits for the pool to finish, and prints the stored results and sample errors. The race test requires a platform supported by Go's race detector and, on Linux, a C compiler.
 
-- `cmd/demo/main.go` — demonstration.
-- `task/task.go` — task model, text analyzer, and in-memory service.
-- `task/task_test.go` — unit tests.
+## Create and submit tasks
 
-## Input and results
+1. Create a service with `task.NewService()`, then start a worker pool with `task.NewPool(service, 2, 3)`.
+2. Call `service.Create(text)` to validate and store a task. Empty, whitespace-only, or invalid UTF-8 input returns `ErrInvalidInput`.
+3. Call `pool.Submit(created.ID)` to enqueue a pending task. A successful call returns as soon as the task is accepted.
+4. Read a snapshot with `service.Get(id)` during or after processing. Unknown IDs return `ErrNotFound`.
+5. Call `pool.Shutdown()` to finish the accepted work and wait for the workers to exit. Completed results remain available through `Get`.
 
-Input must be valid UTF-8 and contain at least one non-whitespace character. The original text is preserved.
+## Workers and queue
 
-Results contain:
+The demo uses **2 workers** and a buffered channel with **3 waiting slots**. Both values are configurable at startup. The worker count must be at least 2 and the queue capacity must be positive. Each worker repeatedly receives task IDs from the same queue and analyzes the corresponding text. Tasks can finish in any order.
 
-- Words: whitespace-separated fields.
-- Characters: Unicode code points, including spaces and punctuation.
-- Letters: Unicode letters.
-- Digits: Unicode digits.
+A full queue causes `Submit` to return `ErrQueueFull` immediately. The task stays pending and can be submitted again once a slot is available.
 
-For `Hello Go world`, the result is 3 words, 14 characters, 12 letters, and 0 digits.
+The asynchronous lifecycle is `pending → queued → processing → completed`. Submitting a queued, processing, or completed task returns `ErrInvalidState`. The Checkpoint 1 method `service.Process(id)` is also available for synchronous callers and only accepts pending tasks. Both entry points claim a task under the same lock.
 
-## Lifecycle
+## Synchronization and shutdown
 
-`pending -> processing -> completed`
+The service's `sync.RWMutex` protects the map, ID allocation, and task transitions. It also protects the pool's closed flag and serializes queue sends with channel closure. A worker acquires that same lock before marking a dequeued task as processing, so it sees the queued state even if it receives the ID immediately. Workers analyze their local copies outside the lock, then save the result and completed status together. `Get` takes a read lock and returns a value copy.
 
-Create validates input and stores a pending task. Process accepts only pending tasks, changes the status to processing, calculates the result, and saves the completed task. Processing an existing processing or completed task returns an error.
+`Shutdown` closes the queue under the write lock, then releases the lock before waiting on a `sync.WaitGroup`. Workers drain the closed channel and exit when it is empty. Each worker signals its exit to the wait group. Repeated or concurrent shutdown calls are safe, and subsequent submissions return `ErrPoolClosed`.
 
-Invalid input returns ErrInvalidInput. Unknown IDs return ErrNotFound. Invalid processing operations return ErrInvalidState.
+## Project layout
 
-## Storage
-
-Service uses a map keyed by integer IDs. IDs are unique within a service instance. Get returns a task copy. Initialize the service with NewService.
-
-Processing is synchronous. The service is not concurrency-safe. Data is lost when the application exits.
+- `cmd/demo/main.go` runs the concurrent text analysis example.
+- `task/task.go` defines the task model, text analyzer, and in-memory service.
+- `task/pool.go` manages the workers, queue, and shutdown.
+- `task/task_test.go` and `task/pool_test.go` verify text analysis and concurrent behavior.
